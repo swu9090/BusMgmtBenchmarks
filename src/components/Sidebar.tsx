@@ -1,4 +1,4 @@
-import { BarChart3, Building2, FileText, X } from 'lucide-react';
+import { BarChart3, Building2, FileText, CalendarDays, X, PanelRightClose } from 'lucide-react';
 
 function Logo() {
   return (
@@ -34,12 +34,14 @@ export function Sidebar({
   currentPage,
   onNavigate,
   onClose,
-  isIframe = false
+  isIframe = false,
+  onCollapse
 }: {
   currentPage: string;
   onNavigate: (page: string) => void;
   onClose?: () => void;
   isIframe?: boolean;
+  onCollapse?: () => void;
 }) {
   const handleNavClick = (page: string) => {
     onNavigate(page);
@@ -47,9 +49,21 @@ export function Sidebar({
   };
 
   return (
-    <div className="h-full bg-white border-r border-neutral-200 flex flex-col">
+    <div className="h-full bg-white border-l border-neutral-200 flex flex-col">
       <div className="flex items-center justify-between">
         <Logo />
+        {!isIframe && (
+          <button
+            onClick={onCollapse}
+            className="hidden md:flex mr-4 p-2 hover:bg-neutral-100 rounded-lg"
+            aria-label="Collapse sidebar"
+            aria-expanded={true}
+            aria-controls="navigation-sidebar"
+            title="Collapse sidebar"
+          >
+            <PanelRightClose className="size-5 text-neutral-600" />
+          </button>
+        )}
         {/* Close button - visible only on mobile (or always when in iframe) */}
         <button
           onClick={onClose}
@@ -78,6 +92,12 @@ export function Sidebar({
           label="Company vs Segment"
           active={currentPage === 'company-vs-segment'}
           onClick={() => handleNavClick('company-vs-segment')}
+        />
+        <NavItem
+          icon={<CalendarDays />}
+          label="Company over Three Years"
+          active={currentPage === 'company-over-time'}
+          onClick={() => handleNavClick('company-over-time')}
         />
         <NavItem
           icon={<FileText />}

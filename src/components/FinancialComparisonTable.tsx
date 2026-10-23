@@ -81,6 +81,8 @@ interface BridgeRequestMessage {
     year1?: string;
     company2?: string;
     year2?: string;
+    company3?: string;
+    year3?: string;
   };
 }
 
@@ -90,7 +92,10 @@ function buildBridgeFinancialData(
   selectedCompany1: string,
   selectedYear1: string,
   selectedCompany2: string,
-  selectedYear2: string
+  selectedYear2: string,
+  company3Data: CompanyFinancials | null,
+  selectedCompany3: string,
+  selectedYear3: string
 ) {
   const company1Label = company1Data
     ? `${company1Data.company} (${company1Data.year})`
@@ -98,6 +103,10 @@ function buildBridgeFinancialData(
   const company2Label = company2Data
     ? `${company2Data.company} (${company2Data.year})`
     : `${selectedCompany2} (${selectedYear2}) - No Data`;
+
+  const company3Label = company3Data
+    ? `${company3Data.company} (${company3Data.year})`
+    : `${selectedCompany3} (${selectedYear3}) - No Data`;
 
   const formatMetric = (companyData: CompanyFinancials | null, fieldName: string) => {
     if (!companyData) {
@@ -110,41 +119,53 @@ function buildBridgeFinancialData(
     );
   };
 
-  const numbers: Record<string, { company1: string; company2: string }> = {};
-  const indicators: Record<string, { company1: string; company2: string }> = {};
+  const numbers: Record<string, { company1: string; company2: string; company3: string }> = {};
+  const indicators: Record<string, { company1: string; company2: string; company3: string }> = {};
 
   for (const [label, fieldName] of FINANCIAL_SECTIONS['Financial Numbers (in thousands)']) {
     numbers[label] = {
       company1: formatMetric(company1Data, fieldName),
-      company2: formatMetric(company2Data, fieldName)
+      company2: formatMetric(company2Data, fieldName),
+      company3: formatMetric(company3Data, fieldName)
     };
   }
 
   for (const [label, fieldName] of FINANCIAL_SECTIONS['Financial Indicators']) {
     indicators[label] = {
       company1: formatMetric(company1Data, fieldName),
-      company2: formatMetric(company2Data, fieldName)
+      company2: formatMetric(company2Data, fieldName),
+      company3: formatMetric(company3Data, fieldName)
     };
   }
 
   return {
     company1: company1Label,
     company2: company2Label,
+    company3: company3Label,
     financial_numbers: numbers,
     financial_indicators: indicators,
     note: 'Values are formatted as shown in the UI, with financial numbers in thousands.'
   };
 }
 
-export function FinancialComparisonTable() {
+export function FinancialComparisonTable({ mode = 'companies' }: { mode?: 'companies' | 'years' }) {
+  const isYearComparison = mode === 'years';
   const [companies, setCompanies] = useState<string[]>([]);
   const [selectedCompany1, setSelectedCompany1] = useState<string>('');
   const [selectedYear1, setSelectedYear1] = useState<string>('2025');
-  const [selectedCompany2, setSelectedCompany2] = useState<string>('');
-  const [selectedYear2, setSelectedYear2] = useState<string>('2025');
+  const [comparisonCompany2, setComparisonCompany2] = useState<string>('');
+  const [comparisonCompany3, setComparisonCompany3] = useState<string>('');
+  const [selectedYear2, setSelectedYear2] = useState<string>(isYearComparison ? AVAILABLE_YEARS[1] : AVAILABLE_YEARS[0]);
+  const [selectedYear3, setSelectedYear3] = useState<string>(isYearComparison ? AVAILABLE_YEARS[2] : AVAILABLE_YEARS[0]);
   const [company1Data, setCompany1Data] = useState<CompanyFinancials | null>(null);
   const [company2Data, setCompany2Data] = useState<CompanyFinancials | null>(null);
+  const [company3Data, setCompany3Data] = useState<CompanyFinancials | null>(null);
   const [loading, setLoading] = useState(true);
+
+  const selectedCompany2 = isYearComparison ? selectedCompany1 : comparisonCompany2;
+  const selectedCompany3 = isYearComparison ? selectedCompany1 : comparisonCompany3;
+  const setSelectedCompany2 = isYearComparison ? setSelectedCompany1 : setComparisonCompany2;
+  const setSelectedCompany3 = isYearComparison ? setSelectedCompany1 : setComparisonCompany3;
 
   // Fetch company list on mount
   useEffect(() => {
@@ -153,7 +174,8 @@ export function FinancialComparisonTable() {
       setCompanies(companyList);
       if (companyList.length >= 2) {
         setSelectedCompany1(companyList.includes("Dillard's") ? "Dillard's" : companyList[0]);
-        setSelectedCompany2(companyList.includes("Macy's") ? "Macy's" : companyList[1]);
+        setComparisonCompany2(companyList.includes("Macy's") ? "Macy's" : companyList[1]);
+        setComparisonCompany3(companyList.includes('Target') ? 'Target' : companyList.find(c => c !== companyList[0] && c !== companyList[1]) ?? companyList[0]);
       } else {
         setLoading(false);
       }
@@ -163,22 +185,27 @@ export function FinancialComparisonTable() {
 
   // Fetch company data when selections change
   useEffect(() => {
+    let cancelled = false;
     const loadData = async () => {
-      if (!selectedCompany1 || !selectedCompany2) {
+      if (!selectedCompany1 || !selectedCompany2 || !selectedCompany3) {
         return;
       }
 
       setLoading(true);
-      const [data1, data2] = await Promise.all([
+      const [data1, data2, data3] = await Promise.all([
         fetchCompanyFinancials(selectedCompany1, selectedYear1),
-        fetchCompanyFinancials(selectedCompany2, selectedYear2)
+        fetchCompanyFinancials(selectedCompany2, selectedYear2),
+        fetchCompanyFinancials(selectedCompany3, selectedYear3)
       ]);
+      if (cancelled) return;
       setCompany1Data(data1);
       setCompany2Data(data2);
+      setCompany3Data(data3);
       setLoading(false);
     };
     loadData();
-  }, [selectedCompany1, selectedYear1, selectedCompany2, selectedYear2]);
+    return () => { cancelled = true; };
+  }, [selectedCompany1, selectedYear1, selectedCompany2, selectedYear2, selectedCompany3, selectedYear3]);
 
   useEffect(() => {
     const isBridgeRequest = (value: unknown): value is BridgeRequestMessage => {
@@ -222,14 +249,22 @@ export function FinancialComparisonTable() {
         return;
       }
 
-      const { requestId, action, payload } = event.data;
+      const { requestId, action } = event.data;
+      let payload = event.data.payload;
+      // A company change applies to every column in the three-year view.
+      if (isYearComparison && payload) {
+        const company = payload.company1 ?? payload.company2 ?? payload.company3;
+        if (company) payload = { ...payload, company1: company, company2: company, company3: company };
+      }
 
       if (action === 'get_selection') {
         postBridgeResponse(event.source, event.origin, requestId, action, true, {
           company1: selectedCompany1,
           year1: selectedYear1,
           company2: selectedCompany2,
-          year2: selectedYear2
+          year2: selectedYear2,
+          company3: selectedCompany3,
+          year3: selectedYear3
         });
         return;
       }
@@ -256,6 +291,15 @@ export function FinancialComparisonTable() {
           }
         }
 
+        if (payload?.company3) {
+          if (companies.includes(payload.company3)) {
+            setSelectedCompany3(payload.company3);
+            updates.company3 = payload.company3;
+          } else {
+            warnings.push(`Unknown company3 value: ${payload.company3}`);
+          }
+        }
+
         if (payload?.year1) {
           if (AVAILABLE_YEARS.includes(payload.year1)) {
             setSelectedYear1(payload.year1);
@@ -274,6 +318,15 @@ export function FinancialComparisonTable() {
           }
         }
 
+        if (payload?.year3) {
+          if (AVAILABLE_YEARS.includes(payload.year3)) {
+            setSelectedYear3(payload.year3);
+            updates.year3 = payload.year3;
+          } else {
+            warnings.push(`Unsupported year3 value: ${payload.year3}`);
+          }
+        }
+
         postBridgeResponse(event.source, event.origin, requestId, action, true, {
           updates,
           warnings,
@@ -281,7 +334,9 @@ export function FinancialComparisonTable() {
             company1: payload?.company1 && companies.includes(payload.company1) ? payload.company1 : selectedCompany1,
             year1: payload?.year1 && AVAILABLE_YEARS.includes(payload.year1) ? payload.year1 : selectedYear1,
             company2: payload?.company2 && companies.includes(payload.company2) ? payload.company2 : selectedCompany2,
-            year2: payload?.year2 && AVAILABLE_YEARS.includes(payload.year2) ? payload.year2 : selectedYear2
+            year2: payload?.year2 && AVAILABLE_YEARS.includes(payload.year2) ? payload.year2 : selectedYear2,
+            company3: payload?.company3 && companies.includes(payload.company3) ? payload.company3 : selectedCompany3,
+            year3: payload?.year3 && AVAILABLE_YEARS.includes(payload.year3) ? payload.year3 : selectedYear3
           }
         });
         return;
@@ -294,7 +349,10 @@ export function FinancialComparisonTable() {
           selectedCompany1,
           selectedYear1,
           selectedCompany2,
-          selectedYear2
+          selectedYear2,
+          company3Data,
+          selectedCompany3,
+          selectedYear3
         ));
         return;
       }
@@ -305,17 +363,21 @@ export function FinancialComparisonTable() {
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
   }, [
+    isYearComparison,
     companies,
     company1Data,
     company2Data,
     selectedCompany1,
     selectedCompany2,
     selectedYear1,
-    selectedYear2
+    selectedYear2,
+    company3Data,
+    selectedCompany3,
+    selectedYear3
   ]);
 
   const handleExportToExcel = () => {
-    if (!company1Data && !company2Data) {
+    if (!company1Data && !company2Data && !company3Data) {
       alert('No data available to export. Please select companies and years that have data.');
       return;
     }
@@ -327,19 +389,21 @@ export function FinancialComparisonTable() {
     excelData.push([
       '',
       company1Data ? `${company1Data.company} (${company1Data.year})` : `${selectedCompany1} (${selectedYear1}) - No Data`,
-      company2Data ? `${company2Data.company} (${company2Data.year})` : `${selectedCompany2} (${selectedYear2}) - No Data`
+      company2Data ? `${company2Data.company} (${company2Data.year})` : `${selectedCompany2} (${selectedYear2}) - No Data`,
+      company3Data ? `${company3Data.company} (${company3Data.year})` : `${selectedCompany3} (${selectedYear3}) - No Data`
     ]);
 
     // Add each section
     for (const [sectionName, fields] of Object.entries(FINANCIAL_SECTIONS)) {
       // Add section header
-      excelData.push([sectionName, '', '']);
+      excelData.push([sectionName, '', '', '']);
 
       // Add data rows
       for (const [label, fieldName] of fields) {
         const value1 = company1Data ? formatValue(company1Data[fieldName as keyof CompanyFinancials] as number, fieldName, company1Data.company) : '-';
         const value2 = company2Data ? formatValue(company2Data[fieldName as keyof CompanyFinancials] as number, fieldName, company2Data.company) : '-';
-        excelData.push([label, value1, value2]);
+        const value3 = company3Data ? formatValue(company3Data[fieldName as keyof CompanyFinancials] as number, fieldName, company3Data.company) : '-';
+        excelData.push([label, value1, value2, value3]);
       }
     }
 
@@ -349,13 +413,14 @@ export function FinancialComparisonTable() {
     XLSX.utils.book_append_sheet(wb, ws, 'Company Comparison');
 
     // Download the file
-    XLSX.writeFile(wb, 'company_comparison.xlsx');
+    XLSX.writeFile(wb, isYearComparison ? 'company_three_year_comparison.xlsx' : 'company_comparison.xlsx');
   };
 
   const isIframe = new URLSearchParams(window.location.search).get('iframe') === 'true';
 
   const company1 = company1Data;
   const company2 = company2Data;
+  const company3 = company3Data;
 
   return (
     <div className="space-y-2">
@@ -366,11 +431,29 @@ export function FinancialComparisonTable() {
         </div>
       </div>
 
+      {isYearComparison && (
+        <section className="bg-white rounded-xl border border-neutral-200 p-4 space-y-3">
+          <h1 className="text-xl font-semibold text-neutral-950">One company across three years</h1>
+          <p className="text-sm text-neutral-600">Choose a company, then select a fiscal year for each column to compare its performance over time.</p>
+          <label className="block text-sm font-medium text-neutral-700" htmlFor="three-year-company">Company</label>
+          <select
+            id="three-year-company"
+            className="w-full sm:max-w-sm px-3 py-2 bg-white border border-neutral-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+            value={selectedCompany1}
+            onChange={(event) => setSelectedCompany1(event.target.value)}
+            disabled={companies.length === 0}
+          >
+            {companies.map(company => <option key={company} value={company}>{company}</option>)}
+          </select>
+        </section>
+      )}
+
       {/* Export Section — hidden at narrow widths when embedded in the chat wrapper */}
       <div className={`flex items-center justify-end${isIframe ? ' hidden md:flex' : ''}`}>
         <button
+          disabled={loading}
           onClick={handleExportToExcel}
-          className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white border border-blue-600 rounded-lg font-['Geist:Medium',sans-serif] hover:bg-blue-700 transition-colors shadow-sm"
+          className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white border border-green-600 rounded-lg font-['Geist:Medium',sans-serif] hover:bg-green-700 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
         >
           <Download className="size-4" />
           Export to Excel
@@ -383,19 +466,25 @@ export function FinancialComparisonTable() {
       <>
       {/* Mobile Selector Panel - visible only on mobile */}
       <div className="md:hidden bg-white rounded-xl border border-neutral-200 shadow-sm p-4 space-y-4">
-        <h3 className="font-['Geist:Medium',sans-serif] font-medium text-neutral-950 text-sm">Select Companies to Compare</h3>
-        <div className="grid grid-cols-2 gap-4">
+        <h3 className="font-['Geist:Medium',sans-serif] font-medium text-neutral-950 text-sm">{isYearComparison ? 'Select Three Years to Compare' : 'Select Companies to Compare'}</h3>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <div className="space-y-2">
-            <label className="text-xs text-neutral-500 font-['Geist:Medium',sans-serif]">Company 1</label>
+            <label className="text-xs text-neutral-500 font-['Geist:Medium',sans-serif]">{isYearComparison ? 'Year 1' : 'Company 1'}</label>
+            {isYearComparison ? (
+              <p className="font-medium text-neutral-950">{selectedCompany1}</p>
+            ) : (
             <select
               className="w-full px-3 py-2 bg-white border border-neutral-300 rounded-lg font-['Geist:Medium',sans-serif] text-neutral-950 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              aria-label="Company 1"
               value={selectedCompany1}
               onChange={(e) => setSelectedCompany1(e.target.value)}
             >
               {companies.map(c => <option key={c} value={c}>{c}</option>)}
             </select>
+            )}
             <select
               className="w-full px-3 py-2 bg-white border border-neutral-300 rounded-lg font-['Geist:Regular',sans-serif] text-neutral-700 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              aria-label="Year 1"
               value={selectedYear1}
               onChange={(e) => setSelectedYear1(e.target.value)}
             >
@@ -408,16 +497,22 @@ export function FinancialComparisonTable() {
             )}
           </div>
           <div className="space-y-2">
-            <label className="text-xs text-neutral-500 font-['Geist:Medium',sans-serif]">Company 2</label>
+            <label className="text-xs text-neutral-500 font-['Geist:Medium',sans-serif]">{isYearComparison ? 'Year 2' : 'Company 2'}</label>
+            {isYearComparison ? (
+              <p className="font-medium text-neutral-950">{selectedCompany1}</p>
+            ) : (
             <select
               className="w-full px-3 py-2 bg-white border border-neutral-300 rounded-lg font-['Geist:Medium',sans-serif] text-neutral-950 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              aria-label="Company 2"
               value={selectedCompany2}
               onChange={(e) => setSelectedCompany2(e.target.value)}
             >
               {companies.map(c => <option key={c} value={c}>{c}</option>)}
             </select>
+            )}
             <select
               className="w-full px-3 py-2 bg-white border border-neutral-300 rounded-lg font-['Geist:Regular',sans-serif] text-neutral-700 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              aria-label="Year 2"
               value={selectedYear2}
               onChange={(e) => setSelectedYear2(e.target.value)}
             >
@@ -429,28 +524,62 @@ export function FinancialComparisonTable() {
               </div>
             )}
           </div>
+          <div className="space-y-2">
+            <label className="text-xs text-neutral-500 font-['Geist:Medium',sans-serif]">{isYearComparison ? 'Year 3' : 'Company 3'}</label>
+            {isYearComparison ? (
+              <p className="font-medium text-neutral-950">{selectedCompany1}</p>
+            ) : (
+            <select
+              className="w-full px-3 py-2 bg-white border border-neutral-300 rounded-lg font-['Geist:Medium',sans-serif] text-neutral-950 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              aria-label="Company 3"
+              value={selectedCompany3}
+              onChange={(e) => setSelectedCompany3(e.target.value)}
+            >
+              {companies.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+            )}
+            <select
+              className="w-full px-3 py-2 bg-white border border-neutral-300 rounded-lg font-['Geist:Regular',sans-serif] text-neutral-700 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              aria-label="Year 3"
+              value={selectedYear3}
+              onChange={(e) => setSelectedYear3(e.target.value)}
+            >
+              {AVAILABLE_YEARS.map(y => <option key={y} value={y}>{y}</option>)}
+            </select>
+            {!company3Data && (
+              <div className="text-red-600 text-xs font-['Geist:Regular',sans-serif]">
+                No data available
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
       {/* Financial Comparison Table */}
-      <div className="bg-white rounded-xl border border-neutral-200 shadow-sm overflow-hidden">
+      <div className="bg-white rounded-xl border border-neutral-200 shadow-sm overflow-x-auto">
         {/* Desktop Header - with dropdowns */}
-        <div className="hidden md:grid grid-cols-[2fr_1fr_1fr] bg-neutral-100 sticky top-0 z-10 shadow-sm">
+        <div className="hidden md:grid grid-cols-[2fr_1fr_1fr_1fr] bg-neutral-100 sticky top-0 z-10 shadow-sm">
           <div className="px-6 py-4 flex items-center">
             <h2 className="font-['Geist:Medium',sans-serif] font-medium text-neutral-950">
               Financial Numbers (in thousands)
             </h2>
           </div>
           <div className="px-6 py-4 border-l border-neutral-200 space-y-2">
+            {isYearComparison ? (
+              <p className="font-medium text-neutral-950">{selectedCompany1}</p>
+            ) : (
             <select
               className="w-full px-3 py-2 bg-white border border-neutral-300 rounded-lg font-['Geist:Medium',sans-serif] text-neutral-950 shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              aria-label="Company 1"
               value={selectedCompany1}
               onChange={(e) => setSelectedCompany1(e.target.value)}
             >
               {companies.map(c => <option key={c} value={c}>{c}</option>)}
             </select>
+            )}
             <select
               className="w-full px-3 py-2 bg-white border border-neutral-300 rounded-lg font-['Geist:Regular',sans-serif] text-neutral-700 shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              aria-label="Year 1"
               value={selectedYear1}
               onChange={(e) => setSelectedYear1(e.target.value)}
             >
@@ -463,15 +592,21 @@ export function FinancialComparisonTable() {
             )}
           </div>
           <div className="px-6 py-4 border-l border-neutral-200 space-y-2">
+            {isYearComparison ? (
+              <p className="font-medium text-neutral-950">{selectedCompany1}</p>
+            ) : (
             <select
               className="w-full px-3 py-2 bg-white border border-neutral-300 rounded-lg font-['Geist:Medium',sans-serif] text-neutral-950 shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              aria-label="Company 2"
               value={selectedCompany2}
               onChange={(e) => setSelectedCompany2(e.target.value)}
             >
               {companies.map(c => <option key={c} value={c}>{c}</option>)}
             </select>
+            )}
             <select
               className="w-full px-3 py-2 bg-white border border-neutral-300 rounded-lg font-['Geist:Regular',sans-serif] text-neutral-700 shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              aria-label="Year 2"
               value={selectedYear2}
               onChange={(e) => setSelectedYear2(e.target.value)}
             >
@@ -483,10 +618,37 @@ export function FinancialComparisonTable() {
               </div>
             )}
           </div>
+          <div className="px-6 py-4 border-l border-neutral-200 space-y-2">
+            {isYearComparison ? (
+              <p className="font-medium text-neutral-950">{selectedCompany1}</p>
+            ) : (
+            <select
+              className="w-full px-3 py-2 bg-white border border-neutral-300 rounded-lg font-['Geist:Medium',sans-serif] text-neutral-950 shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              aria-label="Company 3"
+              value={selectedCompany3}
+              onChange={(e) => setSelectedCompany3(e.target.value)}
+            >
+              {companies.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+            )}
+            <select
+              className="w-full px-3 py-2 bg-white border border-neutral-300 rounded-lg font-['Geist:Regular',sans-serif] text-neutral-700 shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              aria-label="Year 3"
+              value={selectedYear3}
+              onChange={(e) => setSelectedYear3(e.target.value)}
+            >
+              {AVAILABLE_YEARS.map(y => <option key={y} value={y}>{y}</option>)}
+            </select>
+            {!company3Data && (
+              <div className="text-red-600 text-sm font-['Geist:Regular',sans-serif] mt-2">
+                {selectedCompany3} {selectedYear3}: No data available
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Mobile: Unified grid for both sections */}
-        <div className="md:hidden grid grid-cols-3">
+        <div className="md:hidden grid grid-cols-4 min-w-[560px]">
           {/* Financial Numbers Header Row */}
           <div className="px-2 py-3 flex items-center bg-neutral-100 sticky top-0 z-10 border-b border-neutral-200 min-w-0">
             <h2 className="font-['Geist:Medium',sans-serif] font-medium text-neutral-950 text-xs truncate">
@@ -503,39 +665,52 @@ export function FinancialComparisonTable() {
               {selectedCompany2} ({selectedYear2})
             </span>
           </div>
+          <div className="px-2 py-3 border-l border-neutral-200 flex items-center justify-center bg-neutral-100 sticky top-0 z-10 border-b border-neutral-200 min-w-0">
+            <span className="font-['Geist:Medium',sans-serif] text-neutral-950 text-[10px] text-center truncate">
+              {selectedCompany3} ({selectedYear3})
+            </span>
+          </div>
 
           {/* Financial Numbers Data Rows */}
           <div className="px-2 py-3 font-['Geist:Regular',sans-serif] text-neutral-950 text-xs border-b border-neutral-200 min-w-0 truncate">Revenue</div>
           <div className="px-2 py-3 border-l border-neutral-200 font-['Geist:Regular',sans-serif] text-neutral-950 text-xs text-right border-b border-neutral-200 min-w-0">{formatCompanyValue(company1, 'Net Revenue')}</div>
           <div className="px-2 py-3 border-l border-neutral-200 font-['Geist:Regular',sans-serif] text-neutral-950 text-xs text-right border-b border-neutral-200 min-w-0">{formatCompanyValue(company2, 'Net Revenue')}</div>
+          <div className="px-2 py-3 border-l border-neutral-200 font-['Geist:Regular',sans-serif] text-neutral-950 text-xs text-right border-b border-neutral-200 min-w-0">{formatCompanyValue(company3, 'Net Revenue')}</div>
 
           <div className="px-2 py-3 font-['Geist:Regular',sans-serif] text-neutral-950 text-xs border-b border-neutral-200 min-w-0 truncate">COGS</div>
           <div className="px-2 py-3 border-l border-neutral-200 font-['Geist:Regular',sans-serif] text-neutral-950 text-xs text-right border-b border-neutral-200 min-w-0">{formatCompanyValue(company1, 'Cost of Goods')}</div>
           <div className="px-2 py-3 border-l border-neutral-200 font-['Geist:Regular',sans-serif] text-neutral-950 text-xs text-right border-b border-neutral-200 min-w-0">{formatCompanyValue(company2, 'Cost of Goods')}</div>
+          <div className="px-2 py-3 border-l border-neutral-200 font-['Geist:Regular',sans-serif] text-neutral-950 text-xs text-right border-b border-neutral-200 min-w-0">{formatCompanyValue(company3, 'Cost of Goods')}</div>
 
           <div className="px-2 py-3 font-['Geist:Regular',sans-serif] text-neutral-950 text-xs border-b border-neutral-200 min-w-0 truncate">Gross Margin</div>
           <div className="px-2 py-3 border-l border-neutral-200 font-['Geist:Regular',sans-serif] text-neutral-950 text-xs text-right border-b border-neutral-200 min-w-0">{formatCompanyValue(company1, 'Gross Margin')}</div>
           <div className="px-2 py-3 border-l border-neutral-200 font-['Geist:Regular',sans-serif] text-neutral-950 text-xs text-right border-b border-neutral-200 min-w-0">{formatCompanyValue(company2, 'Gross Margin')}</div>
+          <div className="px-2 py-3 border-l border-neutral-200 font-['Geist:Regular',sans-serif] text-neutral-950 text-xs text-right border-b border-neutral-200 min-w-0">{formatCompanyValue(company3, 'Gross Margin')}</div>
 
           <div className="px-2 py-3 font-['Geist:Regular',sans-serif] text-neutral-950 text-xs border-b border-neutral-200 min-w-0 truncate">SG&A</div>
           <div className="px-2 py-3 border-l border-neutral-200 font-['Geist:Regular',sans-serif] text-neutral-950 text-xs text-right border-b border-neutral-200 min-w-0">{formatCompanyValue(company1, 'SGA')}</div>
           <div className="px-2 py-3 border-l border-neutral-200 font-['Geist:Regular',sans-serif] text-neutral-950 text-xs text-right border-b border-neutral-200 min-w-0">{formatCompanyValue(company2, 'SGA')}</div>
+          <div className="px-2 py-3 border-l border-neutral-200 font-['Geist:Regular',sans-serif] text-neutral-950 text-xs text-right border-b border-neutral-200 min-w-0">{formatCompanyValue(company3, 'SGA')}</div>
 
           <div className="px-2 py-3 font-['Geist:Regular',sans-serif] text-neutral-950 text-xs border-b border-neutral-200 min-w-0 truncate">Op. Profit</div>
           <div className="px-2 py-3 border-l border-neutral-200 font-['Geist:Regular',sans-serif] text-neutral-950 text-xs text-right border-b border-neutral-200 min-w-0">{formatCompanyValue(company1, 'Operating Profit')}</div>
           <div className="px-2 py-3 border-l border-neutral-200 font-['Geist:Regular',sans-serif] text-neutral-950 text-xs text-right border-b border-neutral-200 min-w-0">{formatCompanyValue(company2, 'Operating Profit')}</div>
+          <div className="px-2 py-3 border-l border-neutral-200 font-['Geist:Regular',sans-serif] text-neutral-950 text-xs text-right border-b border-neutral-200 min-w-0">{formatCompanyValue(company3, 'Operating Profit')}</div>
 
           <div className="px-2 py-3 font-['Geist:Regular',sans-serif] text-neutral-950 text-xs border-b border-neutral-200 min-w-0 truncate">Net Profit</div>
           <div className="px-2 py-3 border-l border-neutral-200 font-['Geist:Regular',sans-serif] text-neutral-950 text-xs text-right border-b border-neutral-200 min-w-0">{formatCompanyValue(company1, 'Net Profit')}</div>
           <div className="px-2 py-3 border-l border-neutral-200 font-['Geist:Regular',sans-serif] text-neutral-950 text-xs text-right border-b border-neutral-200 min-w-0">{formatCompanyValue(company2, 'Net Profit')}</div>
+          <div className="px-2 py-3 border-l border-neutral-200 font-['Geist:Regular',sans-serif] text-neutral-950 text-xs text-right border-b border-neutral-200 min-w-0">{formatCompanyValue(company3, 'Net Profit')}</div>
 
           <div className="px-2 py-3 font-['Geist:Regular',sans-serif] text-neutral-950 text-xs border-b border-neutral-200 min-w-0 truncate">Inventory</div>
           <div className="px-2 py-3 border-l border-neutral-200 font-['Geist:Regular',sans-serif] text-neutral-950 text-xs text-right border-b border-neutral-200 min-w-0">{formatCompanyValue(company1, 'Inventory')}</div>
           <div className="px-2 py-3 border-l border-neutral-200 font-['Geist:Regular',sans-serif] text-neutral-950 text-xs text-right border-b border-neutral-200 min-w-0">{formatCompanyValue(company2, 'Inventory')}</div>
+          <div className="px-2 py-3 border-l border-neutral-200 font-['Geist:Regular',sans-serif] text-neutral-950 text-xs text-right border-b border-neutral-200 min-w-0">{formatCompanyValue(company3, 'Inventory')}</div>
 
           <div className="px-2 py-3 font-['Geist:Regular',sans-serif] text-neutral-950 text-xs border-b border-neutral-200 min-w-0 truncate">Total Assets</div>
           <div className="px-2 py-3 border-l border-neutral-200 font-['Geist:Regular',sans-serif] text-neutral-950 text-xs text-right border-b border-neutral-200 min-w-0">{formatCompanyValue(company1, 'Total Assets')}</div>
           <div className="px-2 py-3 border-l border-neutral-200 font-['Geist:Regular',sans-serif] text-neutral-950 text-xs text-right border-b border-neutral-200 min-w-0">{formatCompanyValue(company2, 'Total Assets')}</div>
+          <div className="px-2 py-3 border-l border-neutral-200 font-['Geist:Regular',sans-serif] text-neutral-950 text-xs text-right border-b border-neutral-200 min-w-0">{formatCompanyValue(company3, 'Total Assets')}</div>
 
           {/* Financial Indicators Header */}
           <div className="px-2 py-3 flex items-center bg-neutral-50 border-b border-neutral-200 min-w-0">
@@ -545,67 +720,80 @@ export function FinancialComparisonTable() {
           </div>
           <div className="px-2 py-3 border-l border-neutral-200 bg-neutral-50 border-b border-neutral-200 min-w-0"></div>
           <div className="px-2 py-3 border-l border-neutral-200 bg-neutral-50 border-b border-neutral-200 min-w-0"></div>
+          <div className="px-2 py-3 border-l border-neutral-200 bg-neutral-50 border-b border-neutral-200 min-w-0"></div>
 
           {/* Financial Indicators Data Rows */}
           <div className="px-2 py-3 font-['Geist:Regular',sans-serif] text-neutral-950 text-xs border-b border-neutral-200 min-w-0 truncate">COGS %</div>
           <div className="px-2 py-3 border-l border-neutral-200 font-['Geist:Regular',sans-serif] text-neutral-950 text-xs text-right border-b border-neutral-200 min-w-0">{formatCompanyValue(company1, 'Cost of Goods %')}</div>
           <div className="px-2 py-3 border-l border-neutral-200 font-['Geist:Regular',sans-serif] text-neutral-950 text-xs text-right border-b border-neutral-200 min-w-0">{formatCompanyValue(company2, 'Cost of Goods %')}</div>
+          <div className="px-2 py-3 border-l border-neutral-200 font-['Geist:Regular',sans-serif] text-neutral-950 text-xs text-right border-b border-neutral-200 min-w-0">{formatCompanyValue(company3, 'Cost of Goods %')}</div>
 
           <div className="px-2 py-3 font-['Geist:Regular',sans-serif] text-neutral-950 text-xs border-b border-neutral-200 min-w-0 truncate">Gross %</div>
           <div className="px-2 py-3 border-l border-neutral-200 font-['Geist:Regular',sans-serif] text-neutral-950 text-xs text-right border-b border-neutral-200 min-w-0">{formatCompanyValue(company1, 'Gross Margin %')}</div>
           <div className="px-2 py-3 border-l border-neutral-200 font-['Geist:Regular',sans-serif] text-neutral-950 text-xs text-right border-b border-neutral-200 min-w-0">{formatCompanyValue(company2, 'Gross Margin %')}</div>
+          <div className="px-2 py-3 border-l border-neutral-200 font-['Geist:Regular',sans-serif] text-neutral-950 text-xs text-right border-b border-neutral-200 min-w-0">{formatCompanyValue(company3, 'Gross Margin %')}</div>
 
           <div className="px-2 py-3 font-['Geist:Regular',sans-serif] text-neutral-950 text-xs border-b border-neutral-200 min-w-0 truncate">SG&A %</div>
           <div className="px-2 py-3 border-l border-neutral-200 font-['Geist:Regular',sans-serif] text-neutral-950 text-xs text-right border-b border-neutral-200 min-w-0">{formatCompanyValue(company1, 'SGA %')}</div>
           <div className="px-2 py-3 border-l border-neutral-200 font-['Geist:Regular',sans-serif] text-neutral-950 text-xs text-right border-b border-neutral-200 min-w-0">{formatCompanyValue(company2, 'SGA %')}</div>
+          <div className="px-2 py-3 border-l border-neutral-200 font-['Geist:Regular',sans-serif] text-neutral-950 text-xs text-right border-b border-neutral-200 min-w-0">{formatCompanyValue(company3, 'SGA %')}</div>
 
           <div className="px-2 py-3 font-['Geist:Regular',sans-serif] text-neutral-950 text-xs border-b border-neutral-200 min-w-0 truncate">Op. Margin %</div>
           <div className="px-2 py-3 border-l border-neutral-200 font-['Geist:Regular',sans-serif] text-neutral-950 text-xs text-right border-b border-neutral-200 min-w-0">{formatCompanyValue(company1, 'Operating Profit Margin %')}</div>
           <div className="px-2 py-3 border-l border-neutral-200 font-['Geist:Regular',sans-serif] text-neutral-950 text-xs text-right border-b border-neutral-200 min-w-0">{formatCompanyValue(company2, 'Operating Profit Margin %')}</div>
+          <div className="px-2 py-3 border-l border-neutral-200 font-['Geist:Regular',sans-serif] text-neutral-950 text-xs text-right border-b border-neutral-200 min-w-0">{formatCompanyValue(company3, 'Operating Profit Margin %')}</div>
 
           <div className="px-2 py-3 font-['Geist:Regular',sans-serif] text-neutral-950 text-xs border-b border-neutral-200 min-w-0 truncate">Net Margin %</div>
           <div className="px-2 py-3 border-l border-neutral-200 font-['Geist:Regular',sans-serif] text-neutral-950 text-xs text-right border-b border-neutral-200 min-w-0">{formatCompanyValue(company1, 'Net Profit Margin %')}</div>
           <div className="px-2 py-3 border-l border-neutral-200 font-['Geist:Regular',sans-serif] text-neutral-950 text-xs text-right border-b border-neutral-200 min-w-0">{formatCompanyValue(company2, 'Net Profit Margin %')}</div>
+          <div className="px-2 py-3 border-l border-neutral-200 font-['Geist:Regular',sans-serif] text-neutral-950 text-xs text-right border-b border-neutral-200 min-w-0">{formatCompanyValue(company3, 'Net Profit Margin %')}</div>
 
           <div className="px-2 py-3 font-['Geist:Regular',sans-serif] text-neutral-950 text-xs border-b border-neutral-200 min-w-0 truncate">Inv. Turn</div>
           <div className="px-2 py-3 border-l border-neutral-200 font-['Geist:Regular',sans-serif] text-neutral-950 text-xs text-right border-b border-neutral-200 min-w-0">{formatCompanyValue(company1, 'Inventory Turnover')}</div>
           <div className="px-2 py-3 border-l border-neutral-200 font-['Geist:Regular',sans-serif] text-neutral-950 text-xs text-right border-b border-neutral-200 min-w-0">{formatCompanyValue(company2, 'Inventory Turnover')}</div>
+          <div className="px-2 py-3 border-l border-neutral-200 font-['Geist:Regular',sans-serif] text-neutral-950 text-xs text-right border-b border-neutral-200 min-w-0">{formatCompanyValue(company3, 'Inventory Turnover')}</div>
 
           <div className="px-2 py-3 font-['Geist:Regular',sans-serif] text-neutral-950 text-xs border-b border-neutral-200 min-w-0 truncate">Current</div>
           <div className="px-2 py-3 border-l border-neutral-200 font-['Geist:Regular',sans-serif] text-neutral-950 text-xs text-right border-b border-neutral-200 min-w-0">{formatCompanyValue(company1, 'Current Ratio')}</div>
           <div className="px-2 py-3 border-l border-neutral-200 font-['Geist:Regular',sans-serif] text-neutral-950 text-xs text-right border-b border-neutral-200 min-w-0">{formatCompanyValue(company2, 'Current Ratio')}</div>
+          <div className="px-2 py-3 border-l border-neutral-200 font-['Geist:Regular',sans-serif] text-neutral-950 text-xs text-right border-b border-neutral-200 min-w-0">{formatCompanyValue(company3, 'Current Ratio')}</div>
 
           <div className="px-2 py-3 font-['Geist:Regular',sans-serif] text-neutral-950 text-xs border-b border-neutral-200 min-w-0 truncate">Quick</div>
           <div className="px-2 py-3 border-l border-neutral-200 font-['Geist:Regular',sans-serif] text-neutral-950 text-xs text-right border-b border-neutral-200 min-w-0">{formatCompanyValue(company1, 'Quick Ratio')}</div>
           <div className="px-2 py-3 border-l border-neutral-200 font-['Geist:Regular',sans-serif] text-neutral-950 text-xs text-right border-b border-neutral-200 min-w-0">{formatCompanyValue(company2, 'Quick Ratio')}</div>
+          <div className="px-2 py-3 border-l border-neutral-200 font-['Geist:Regular',sans-serif] text-neutral-950 text-xs text-right border-b border-neutral-200 min-w-0">{formatCompanyValue(company3, 'Quick Ratio')}</div>
 
           <div className="px-2 py-3 font-['Geist:Regular',sans-serif] text-neutral-950 text-xs border-b border-neutral-200 min-w-0 truncate">D/E</div>
           <div className="px-2 py-3 border-l border-neutral-200 font-['Geist:Regular',sans-serif] text-neutral-950 text-xs text-right border-b border-neutral-200 min-w-0">{formatCompanyValue(company1, 'Debt to Equity')}</div>
           <div className="px-2 py-3 border-l border-neutral-200 font-['Geist:Regular',sans-serif] text-neutral-950 text-xs text-right border-b border-neutral-200 min-w-0">{formatCompanyValue(company2, 'Debt to Equity')}</div>
+          <div className="px-2 py-3 border-l border-neutral-200 font-['Geist:Regular',sans-serif] text-neutral-950 text-xs text-right border-b border-neutral-200 min-w-0">{formatCompanyValue(company3, 'Debt to Equity')}</div>
 
           <div className="px-2 py-3 font-['Geist:Regular',sans-serif] text-neutral-950 text-xs border-b border-neutral-200 min-w-0 truncate">Asset Turn</div>
           <div className="px-2 py-3 border-l border-neutral-200 font-['Geist:Regular',sans-serif] text-neutral-950 text-xs text-right border-b border-neutral-200 min-w-0">{formatCompanyValue(company1, 'Asset Turnover')}</div>
           <div className="px-2 py-3 border-l border-neutral-200 font-['Geist:Regular',sans-serif] text-neutral-950 text-xs text-right border-b border-neutral-200 min-w-0">{formatCompanyValue(company2, 'Asset Turnover')}</div>
+          <div className="px-2 py-3 border-l border-neutral-200 font-['Geist:Regular',sans-serif] text-neutral-950 text-xs text-right border-b border-neutral-200 min-w-0">{formatCompanyValue(company3, 'Asset Turnover')}</div>
 
           <div className="px-2 py-3 font-['Geist:Regular',sans-serif] text-neutral-950 text-xs border-b border-neutral-200 min-w-0 truncate">ROA</div>
           <div className="px-2 py-3 border-l border-neutral-200 font-['Geist:Regular',sans-serif] text-neutral-950 text-xs text-right border-b border-neutral-200 min-w-0">{formatCompanyValue(company1, 'Return on Assets')}</div>
           <div className="px-2 py-3 border-l border-neutral-200 font-['Geist:Regular',sans-serif] text-neutral-950 text-xs text-right border-b border-neutral-200 min-w-0">{formatCompanyValue(company2, 'Return on Assets')}</div>
+          <div className="px-2 py-3 border-l border-neutral-200 font-['Geist:Regular',sans-serif] text-neutral-950 text-xs text-right border-b border-neutral-200 min-w-0">{formatCompanyValue(company3, 'Return on Assets')}</div>
 
           <div className="px-2 py-3 font-['Geist:Regular',sans-serif] text-neutral-950 text-xs min-w-0 truncate">3Y CAGR</div>
           <div className="px-2 py-3 border-l border-neutral-200 font-['Geist:Regular',sans-serif] text-neutral-950 text-xs text-right min-w-0">{formatCompanyValue(company1, 'Three Year Revenue CAGR')}</div>
           <div className="px-2 py-3 border-l border-neutral-200 font-['Geist:Regular',sans-serif] text-neutral-950 text-xs text-right min-w-0">{formatCompanyValue(company2, 'Three Year Revenue CAGR')}</div>
+          <div className="px-2 py-3 border-l border-neutral-200 font-['Geist:Regular',sans-serif] text-neutral-950 text-xs text-right min-w-0">{formatCompanyValue(company3, 'Three Year Revenue CAGR')}</div>
         </div>
 
         {/* Desktop: Original structure */}
         <div className="hidden md:block">
-          <TableRow label="Total Revenue" value1={formatCompanyValue(company1, 'Net Revenue')} value2={formatCompanyValue(company2, 'Net Revenue')} />
-          <TableRow label="Cost of Goods" value1={formatCompanyValue(company1, 'Cost of Goods')} value2={formatCompanyValue(company2, 'Cost of Goods')} />
-          <TableRow label="Gross Margin" value1={formatCompanyValue(company1, 'Gross Margin')} value2={formatCompanyValue(company2, 'Gross Margin')} />
-          <TableRow label="Selling, General & Administrative Expenses" value1={formatCompanyValue(company1, 'SGA')} value2={formatCompanyValue(company2, 'SGA')} />
-          <TableRow label="Operating Profit" value1={formatCompanyValue(company1, 'Operating Profit')} value2={formatCompanyValue(company2, 'Operating Profit')} />
-          <TableRow label="Net Profit" value1={formatCompanyValue(company1, 'Net Profit')} value2={formatCompanyValue(company2, 'Net Profit')} />
-          <TableRow label="Inventory" value1={formatCompanyValue(company1, 'Inventory')} value2={formatCompanyValue(company2, 'Inventory')} />
-          <TableRow label="Total Assets" value1={formatCompanyValue(company1, 'Total Assets')} value2={formatCompanyValue(company2, 'Total Assets')} />
+          <TableRow label="Total Revenue" value1={formatCompanyValue(company1, 'Net Revenue')} value2={formatCompanyValue(company2, 'Net Revenue')} value3={formatCompanyValue(company3, 'Net Revenue')} />
+          <TableRow label="Cost of Goods" value1={formatCompanyValue(company1, 'Cost of Goods')} value2={formatCompanyValue(company2, 'Cost of Goods')} value3={formatCompanyValue(company3, 'Cost of Goods')} />
+          <TableRow label="Gross Margin" value1={formatCompanyValue(company1, 'Gross Margin')} value2={formatCompanyValue(company2, 'Gross Margin')} value3={formatCompanyValue(company3, 'Gross Margin')} />
+          <TableRow label="Selling, General & Administrative Expenses" value1={formatCompanyValue(company1, 'SGA')} value2={formatCompanyValue(company2, 'SGA')} value3={formatCompanyValue(company3, 'SGA')} />
+          <TableRow label="Operating Profit" value1={formatCompanyValue(company1, 'Operating Profit')} value2={formatCompanyValue(company2, 'Operating Profit')} value3={formatCompanyValue(company3, 'Operating Profit')} />
+          <TableRow label="Net Profit" value1={formatCompanyValue(company1, 'Net Profit')} value2={formatCompanyValue(company2, 'Net Profit')} value3={formatCompanyValue(company3, 'Net Profit')} />
+          <TableRow label="Inventory" value1={formatCompanyValue(company1, 'Inventory')} value2={formatCompanyValue(company2, 'Inventory')} value3={formatCompanyValue(company3, 'Inventory')} />
+          <TableRow label="Total Assets" value1={formatCompanyValue(company1, 'Total Assets')} value2={formatCompanyValue(company2, 'Total Assets')} value3={formatCompanyValue(company3, 'Total Assets')} />
 
           {/* Financial Indicators Section */}
           <div className="bg-neutral-50 px-6 py-3 border-b border-neutral-200 border-t border-neutral-200">
@@ -614,18 +802,18 @@ export function FinancialComparisonTable() {
             </h2>
           </div>
 
-          <TableRow label="Cost of goods percentage (COGS/Net Sales)" value1={formatCompanyValue(company1, 'Cost of Goods %')} value2={formatCompanyValue(company2, 'Cost of Goods %')} />
-          <TableRow label="Gross margin percentage (GM/Net Sales)" value1={formatCompanyValue(company1, 'Gross Margin %')} value2={formatCompanyValue(company2, 'Gross Margin %')} />
-          <TableRow label="SG&A expense percentage (SG&A/Net Sales)" value1={formatCompanyValue(company1, 'SGA %')} value2={formatCompanyValue(company2, 'SGA %')} />
-          <TableRow label="Operating profit margin percentage (Op.Profit/Net Sales)" value1={formatCompanyValue(company1, 'Operating Profit Margin %')} value2={formatCompanyValue(company2, 'Operating Profit Margin %')} />
-          <TableRow label="Net profit margin percentage (Net Profit/Net Sales)" value1={formatCompanyValue(company1, 'Net Profit Margin %')} value2={formatCompanyValue(company2, 'Net Profit Margin %')} />
-          <TableRow label="Inventory turnover (COGS/Inventory)" value1={formatCompanyValue(company1, 'Inventory Turnover')} value2={formatCompanyValue(company2, 'Inventory Turnover')} />
-          <TableRow label="Current Ratio (Current Assets/Current Liabilities)" value1={formatCompanyValue(company1, 'Current Ratio')} value2={formatCompanyValue(company2, 'Current Ratio')} />
-          <TableRow label="Quick Ratio ((Cash + AR)/Current Liabilities)" value1={formatCompanyValue(company1, 'Quick Ratio')} value2={formatCompanyValue(company2, 'Quick Ratio')} />
-          <TableRow label="Debt-to-Equity Ratio (Total Debt/Total Equity)" value1={formatCompanyValue(company1, 'Debt to Equity')} value2={formatCompanyValue(company2, 'Debt to Equity')} />
-          <TableRow label="Asset turnover (Net Sales/Total Assets)" value1={formatCompanyValue(company1, 'Asset Turnover')} value2={formatCompanyValue(company2, 'Asset Turnover')} />
-          <TableRow label="Return on assets (ROA)" value1={formatCompanyValue(company1, 'Return on Assets')} value2={formatCompanyValue(company2, 'Return on Assets')} />
-          <TableRow label="3-Year Revenue CAGR" value1={formatCompanyValue(company1, 'Three Year Revenue CAGR')} value2={formatCompanyValue(company2, 'Three Year Revenue CAGR')} isLast />
+          <TableRow label="Cost of goods percentage (COGS/Net Sales)" value1={formatCompanyValue(company1, 'Cost of Goods %')} value2={formatCompanyValue(company2, 'Cost of Goods %')} value3={formatCompanyValue(company3, 'Cost of Goods %')} />
+          <TableRow label="Gross margin percentage (GM/Net Sales)" value1={formatCompanyValue(company1, 'Gross Margin %')} value2={formatCompanyValue(company2, 'Gross Margin %')} value3={formatCompanyValue(company3, 'Gross Margin %')} />
+          <TableRow label="SG&A expense percentage (SG&A/Net Sales)" value1={formatCompanyValue(company1, 'SGA %')} value2={formatCompanyValue(company2, 'SGA %')} value3={formatCompanyValue(company3, 'SGA %')} />
+          <TableRow label="Operating profit margin percentage (Op.Profit/Net Sales)" value1={formatCompanyValue(company1, 'Operating Profit Margin %')} value2={formatCompanyValue(company2, 'Operating Profit Margin %')} value3={formatCompanyValue(company3, 'Operating Profit Margin %')} />
+          <TableRow label="Net profit margin percentage (Net Profit/Net Sales)" value1={formatCompanyValue(company1, 'Net Profit Margin %')} value2={formatCompanyValue(company2, 'Net Profit Margin %')} value3={formatCompanyValue(company3, 'Net Profit Margin %')} />
+          <TableRow label="Inventory turnover (COGS/Inventory)" value1={formatCompanyValue(company1, 'Inventory Turnover')} value2={formatCompanyValue(company2, 'Inventory Turnover')} value3={formatCompanyValue(company3, 'Inventory Turnover')} />
+          <TableRow label="Current Ratio (Current Assets/Current Liabilities)" value1={formatCompanyValue(company1, 'Current Ratio')} value2={formatCompanyValue(company2, 'Current Ratio')} value3={formatCompanyValue(company3, 'Current Ratio')} />
+          <TableRow label="Quick Ratio ((Cash + AR)/Current Liabilities)" value1={formatCompanyValue(company1, 'Quick Ratio')} value2={formatCompanyValue(company2, 'Quick Ratio')} value3={formatCompanyValue(company3, 'Quick Ratio')} />
+          <TableRow label="Debt-to-Equity Ratio (Total Debt/Total Equity)" value1={formatCompanyValue(company1, 'Debt to Equity')} value2={formatCompanyValue(company2, 'Debt to Equity')} value3={formatCompanyValue(company3, 'Debt to Equity')} />
+          <TableRow label="Asset turnover (Net Sales/Total Assets)" value1={formatCompanyValue(company1, 'Asset Turnover')} value2={formatCompanyValue(company2, 'Asset Turnover')} value3={formatCompanyValue(company3, 'Asset Turnover')} />
+          <TableRow label="Return on assets (ROA)" value1={formatCompanyValue(company1, 'Return on Assets')} value2={formatCompanyValue(company2, 'Return on Assets')} value3={formatCompanyValue(company3, 'Return on Assets')} />
+          <TableRow label="3-Year Revenue CAGR" value1={formatCompanyValue(company1, 'Three Year Revenue CAGR')} value2={formatCompanyValue(company2, 'Three Year Revenue CAGR')} value3={formatCompanyValue(company3, 'Three Year Revenue CAGR')} isLast />
         </div>
       </div>
       </>
@@ -634,7 +822,7 @@ export function FinancialComparisonTable() {
       {/* Footer */}
       <div className="text-neutral-500 font-['Geist:Regular',sans-serif] space-y-1">
         {/* Desktop: SEC report links + Attribution aligned with desktop table (2:1:1 ratio) */}
-        <div className="hidden md:grid grid-cols-[2fr_1fr_1fr] text-xs items-start">
+        <div className="hidden md:grid grid-cols-[2fr_1fr_1fr_1fr] text-xs items-start">
           <div className="px-6 text-[11px] space-y-1">
             <p>Fashion Institute of Technology Professors: <strong>Dr. Calvin Williamson</strong>, <strong>Shelley E. Kohan</strong></p>
             <p><strong>Seonmin (Diana) Lee</strong> – AI Systems &amp; Backend Developer</p>
@@ -670,10 +858,24 @@ export function FinancialComparisonTable() {
               <span>No SEC report</span>
             )}
           </div>
+          <div className="px-6 border-l border-neutral-200 text-right text-[11px]">
+            {company3 && getSecFilingUrl(company3.company, Number(company3.year)) ? (
+              <a
+                href={getSecFilingUrl(company3.company, Number(company3.year))!}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-blue-600 hover:underline"
+              >
+                Source: SEC report
+              </a>
+            ) : (
+              <span>No SEC report</span>
+            )}
+          </div>
         </div>
 
         {/* Mobile: SEC report links aligned with mobile table (equal columns) */}
-        <div className="md:hidden grid grid-cols-3 text-xs items-start">
+        <div className="md:hidden grid grid-cols-4 text-xs items-start">
           <span className="px-2"></span>
           <div className="px-2 border-l border-neutral-200 text-right text-[11px]">
             {company1 && getSecFilingUrl(company1.company, Number(company1.year)) ? (
@@ -703,6 +905,20 @@ export function FinancialComparisonTable() {
               <span>No SEC report</span>
             )}
           </div>
+          <div className="px-2 border-l border-neutral-200 text-right text-[11px]">
+            {company3 && getSecFilingUrl(company3.company, Number(company3.year)) ? (
+              <a
+                href={getSecFilingUrl(company3.company, Number(company3.year))!}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-blue-600 hover:underline"
+              >
+                Source: SEC
+              </a>
+            ) : (
+              <span>No SEC report</span>
+            )}
+          </div>
         </div>
 
         {/* Mobile: Attribution (appears below SEC links on mobile only) */}
@@ -722,15 +938,17 @@ function TableRow({
   label,
   value1,
   value2,
+  value3,
   isLast = false
 }: {
   label: string;
   value1: string;
   value2: string;
+  value3: string;
   isLast?: boolean;
 }) {
   return (
-    <div className={`grid grid-cols-[2fr_1fr_1fr] ${!isLast ? 'border-b border-neutral-200' : ''}`}>
+    <div className={`grid grid-cols-[2fr_1fr_1fr_1fr] ${!isLast ? 'border-b border-neutral-200' : ''}`}>
       <div className="px-3 md:px-6 py-4 font-['Geist:Regular',sans-serif] text-neutral-950">
         {label}
       </div>
@@ -739,6 +957,9 @@ function TableRow({
       </div>
       <div className="px-3 md:px-6 py-4 border-l border-neutral-200 font-['Geist:Regular',sans-serif] text-neutral-950 text-right">
         {value2}
+      </div>
+      <div className="px-3 md:px-6 py-4 border-l border-neutral-200 font-['Geist:Regular',sans-serif] text-neutral-950 text-right">
+        {value3}
       </div>
     </div>
   );
